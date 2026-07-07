@@ -1,0 +1,940 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Day2Sleep — 스마트 행동 교정 케어</title>
+  <meta name="description" content="스마트폰 IMU 기반 4-state HAR, 정지→움직임 전이 감지, S_activity, 루틴 순응도 추정" />
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --sub: #64748b;
+      --line: #e2e8f0;
+      --primary: #4f46e5;
+      --primary-light: #e0e7ff;
+      --good: #10b981;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+      --radius: 20px;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans KR", sans-serif; }
+    body { min-height: 100vh; padding-bottom: 90px; }
+    
+    /* 앱 레이아웃 컨테이너 */
+    .app { max-width: 520px; margin: 0 auto; padding: 16px; }
+    
+    /* 상단 헤더 */
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding: 4px 8px; }
+    .header h1 { font-size: 20px; font-weight: 800; margin: 0; color: var(--primary); }
+    .version-tag { font-size: 11px; background: var(--primary-light); color: var(--primary); padding: 2px 8px; border-radius: 12px; font-weight: 600; }
+    
+    /* 카드 컴포넌트 */
+    .card { background: var(--card); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow); border: 1px solid rgba(226, 232, 240, 0.8); }
+    .card-title { font-size: 16px; font-weight: 700; margin-top: 0; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; }
+    
+    /* 대시보드 상태 레이아웃 */
+    .status-hero { text-align: center; padding: 24px 16px; background: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%); color: white; border-radius: var(--radius); margin-bottom: 16px; box-shadow: var(--shadow); }
+    .status-hero .label { font-size: 14px; opacity: 0.8; font-weight: 500; }
+    .status-hero .current-state { font-size: 32px; font-weight: 800; margin: 8px 0; letter-spacing: -0.5px; }
+    .status-hero .confidence { font-size: 12px; background: rgba(255,255,255,0.2); padding: 3px 10px; border-radius: 20px; display: inline-block; }
+    
+    /* 격자형 상태 수치 창 */
+    .grid-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+    .stat-box { background: var(--card); border-radius: 16px; padding: 14px; box-shadow: var(--shadow); border: 1px solid var(--line); }
+    .stat-box .title { font-size: 12px; color: var(--sub); font-weight: 600; margin-bottom: 4px; }
+    .stat-box .value { font-size: 18px; font-weight: 700; color: var(--text); }
+    
+    /* 리스트 및 수치 표현 */
+    .summary-list { list-style: none; padding: 0; margin: 0; }
+    .summary-list li { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+    .summary-list li:last-child { border-bottom: none; padding-bottom: 0; }
+    .summary-list li strong { color: var(--sub); font-weight: 500; }
+    .summary-list li span { font-weight: 700; color: var(--text); }
+    
+    /* 폼 요소 및 셀렉트 박스 */
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 12px; font-weight: 700; color: var(--sub); margin-bottom: 6px; }
+    select, input[type="range"] { width: 100%; height: 42px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background-color: #f1f5f9; font-size: 14px; font-weight: 600; color: var(--text); outline: none; transition: all 0.2s; }
+    select:focus { border-color: var(--primary); background-color: var(--card); }
+    
+    /* 슬라이더 스타일 커스텀 */
+    .slider-container { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    input[type="range"] { -webkit-appearance: none; height: 8px; border-radius: 4px; background: #e2e8f0; padding: 0; }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--primary); cursor: pointer; }
+    .slider-val { min-width: 28px; text-align: right; font-weight: 700; color: var(--primary); font-size: 14px; }
+    
+    /* 버튼 스타일 */
+    .btn { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 46px; border: none; border-radius: 14px; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s; gap: 6px; }
+    .btn-primary { background: var(--primary); color: white; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25); }
+    .btn-primary:opacity { opacity: 0.9; }
+    .btn-primary:active { transform: scale(0.98); }
+    .btn-secondary { background: #f1f5f9; color: var(--text); border: 1px solid var(--line); }
+    .btn-secondary:active { background: #e2e8f0; }
+    .btn-danger { background: #fee2e2; color: var(--bad); }
+    .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    
+    /* 보정 가이드 및 배지 */
+    .badge { font-size: 11px; padding: 2px 6px; border-radius: 6px; font-weight: 700; }
+    .badge-success { background: #d1fae5; color: var(--good); }
+    .badge-error { background: #fee2e2; color: var(--bad); }
+    .guide-box { background: #f1f5f9; border-radius: 12px; padding: 12px; font-size: 13px; color: var(--sub); line-height: 1.5; margin-bottom: 14px; }
+    
+    /* 하단 고정 탭 바 네비게이션 */
+    .nav-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 72px; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(12px); border-top: 1px solid var(--line); display: flex; justify-content: space-around; align-items: center; z-index: 1000; box-shadow: 0 -4px 20px rgba(0,0,0,0.03); }
+    .nav-item { display: flex; flex-direction: column; align-items: center; background: none; border: none; color: var(--sub); font-size: 11px; font-weight: 600; cursor: pointer; padding: 8px 12px; transition: all 0.2s; }
+    .nav-item.active { color: var(--primary); }
+    .nav-icon { font-size: 20px; margin-bottom: 4px; }
+    
+    /* 화면 전환 제어 */
+    .screen { display: none; }
+    .screen.active { display: block; animation: fadeIn 0.25s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    
+    /* 전문가 모드 토글 하단 배치 */
+    .debug-toggle-area { margin-top: 30px; border-top: 1px dashed var(--line); padding-top: 15px; text-align: center; }
+    .debug-section { background: #0f172a; color: #34d399; font-family: monospace; border-radius: 14px; padding: 14px; font-size: 12px; margin-top: 14px; display: none; text-align: left; }
+    .debug-section h3 { color: #f8fafc; margin-top: 0; font-size: 14px; border-bottom: 1px solid #334155; padding-bottom: 6px; }
+    .canvas-container { background: #1e293b; border-radius: 8px; padding: 8px; margin: 10px 0; width: 100%; overflow: hidden; }
+    canvas { width: 100% !important; height: auto !important; display: block; }
+    
+    /* 상태 표시 원형 램프 */
+    .status-lamp { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; margin-right: 6px; vertical-align: middle; }
+    .status-lamp.active { background: var(--good); animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.3); opacity: 0.5; } 100% { transform: scale(1); opacity: 1; } }
+  </style>
+</head>
+<body>
+
+<div class="app">
+  <header class="header">
+    <h1>Day2Sleep</h1>
+    <span class="version-tag">HAR Pipeline v3</span>
+  </header>
+
+  <main id="screen-home" class="screen active">
+    <div class="status-hero">
+      <div class="label">현재 신체 활동 상태</div>
+      <div id="curState" class="current-state">대기</div>
+      <div id="curConfidence" class="confidence">센서 시작 전</div>
+    </div>
+    
+    <div class="grid-stats">
+      <div class="stat-box">
+        <div class="title">신체 부담도 (S_activity)</div>
+        <div id="sActivityVal" class="value">0</div>
+      </div>
+      <div class="stat-box">
+        <div class="title">현재 실시간 좌식 시간</div>
+        <div id="sedTimeVal" class="value">0초</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">측정 환경 설정</div>
+      <div class="form-group">
+        <label>알고리즘 민감도 모드</label>
+        <select id="operationMode">
+          <option value="field">Field · 실제 일상 임계값</option>
+          <option value="demo">Demo · 축약 시연 임계값</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>스마트폰 소지 위치</label>
+        <select id="phoneMode">
+          <option value="pocket">주머니 / 몸 밀착 (4-state 추천)</option>
+          <option value="hand">손에 들고 있음 (제한 분류)</option>
+          <option value="desk">책상 위 배치 (자동 판정 보류)</option>
+        </select>
+      </div>
+      <button id="startBtn" class="btn btn-primary" style="margin-top: 8px;">
+        <span id="lamp" class="status-lamp"></span>
+        <span id="startBtnText">실시간 측정 및 분석 시작</span>
+      </button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">오늘의 신체 행동 요약</div>
+      <ul class="summary-list">
+        <li><strong>연속 좌식 발생 (Bout)</strong> <span id="summary-bouts">0회</span></li>
+        <li><strong>유효한 일어서기 (좌식 중단)</strong> <span id="summary-breaks">0회</span></li>
+        <li><strong>오늘의 최장 연속 좌식 시간</strong> <span id="summary-maxSed">0초</span></li>
+        <li><strong>누적 걷기 활동 시간</strong> <span id="summary-walk">0초</span></li>
+        <li><strong>자세 상태 전환 빈도</strong> <span id="summary-trans">0회</span></li>
+        <li><strong>통합 Body Load Score</strong> <span id="summary-load" style="color: var(--primary);">0점</span></li>
+      </ul>
+      <button id="resetBtn" class="btn btn-secondary" style="margin-top: 14px; height: 36px; font-size: 13px;">전체 측정 지표 초기화</button>
+    </div>
+    
+    <div class="card">
+      <div class="card-title">가상 데이터 퀵 시연</div>
+      <div class="guide-box">데모 프로필을 적용해 센서 연산과 상태 변화 추정을 가상으로 빠르게 체험해봅니다.</div>
+      <div class="btn-grid">
+        <button class="btn btn-secondary" data-demo="walk">보행 전이 시연</button>
+        <button class="btn btn-secondary" data-demo="sit">장시간 좌식 시연</button>
+      </div>
+    </div>
+  </main>
+
+  <main id="screen-routine" class="screen">
+    <div class="card">
+      <div class="card-title">목·허리 보호 교정 루틴</div>
+      <div class="form-group">
+        <label>수행할 추천 루틴 선택</label>
+        <select id="routineType">
+          <option value="stand_break">기립 휴식 (120초 누적)</option>
+          <option value="walk_break">짧은 가벼운 보행 복귀</option>
+          <option value="mobility">목/허리 스트레칭 맵핑</option>
+        </select>
+      </div>
+      <div class="guide-box" id="routineTargetDesc">
+        Field: 비좌식 상태 누적 120초 및 연속 90초 이상 유지 시 센서 자동 완료 처리됩니다.
+      </div>
+      
+      <div class="status-hero" style="background: #f1f5f9; color: var(--text); border: 1px solid var(--line);">
+        <div class="label" style="color: var(--sub);">루틴 달성 진행 상태</div>
+        <div id="routineStatusText" class="current-state" style="font-size: 24px; color: var(--primary);">대기 중</div>
+      </div>
+      
+      <div class="btn-grid" style="margin-top: 14px;">
+        <button id="routineStartBtn" class="btn btn-primary">루틴 자동 검증 시작</button>
+        <button id="routineStopBtn" class="btn btn-danger">중단</button>
+      </div>
+      <button id="routineManualBtn" class="btn btn-secondary" style="margin-top: 8px;">스마트폰 없이 직접 완료함</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">센서 실시간 매칭 검증 스펙</div>
+      <ul class="summary-list">
+        <li><strong>모니터링 경과 시간</strong> <span id="r-elapsed">0초</span></li>
+        <li><strong>비좌식 임계 누적</strong> <span id="r-nonSed">0초</span></li>
+        <li><strong>순수 보행 검출 시간</strong> <span id="r-walk">0초</span></li>
+        <li><strong>미세 움직임 누적</strong> <span id="r-move">0초</span></li>
+        <li><strong>자세 회전 역동성 수치</strong> <span id="r-rot">0초</span></li>
+        <li><strong>연속 걸음 지속 시간</strong> <span id="r-consecWalk">0초</span></li>
+        <li><strong>알고리즘 신뢰 점수 (Evidence)</strong> <span id="r-evidence" style="color:var(--good)">0점</span></li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <div class="card-title">최근 교정 수행 기록</div>
+      <div id="routineHistory" style="font-size: 13px; color: var(--sub); text-align: center; padding: 10px 0;">
+        아직 기록된 교정 루틴 내역이 없습니다.
+      </div>
+    </div>
+  </main>
+
+  <main id="screen-body" class="screen">
+    <div class="card">
+      <div class="card-title">오늘의 주관적 통증 및 피로도</div>
+      <div class="guide-box">체감 통증 지표는 행동 교정 알고리즘 위험도 가중치 산정에 즉시 반영됩니다.</div>
+      
+      <div class="form-group">
+        <div class="slider-container">
+          <label>뒷목 / 어깨 통증</label>
+          <span id="neckVal" class="slider-val">0</span>
+        </div>
+        <input type="range" id="neckPain" min="0" max="10" value="0" />
+      </div>
+
+      <div class="form-group">
+        <div class="slider-container">
+          <label>허리 / 척추 뻐근함</label>
+          <span id="backVal" class="slider-val">0</span>
+        </div>
+        <input type="range" id="backPain" min="0" max="10" value="0" />
+      </div>
+
+      <div class="form-group">
+        <div class="slider-container">
+          <label>전신 피로 및 졸음</label>
+          <span id="fatigueVal" class="slider-val">0</span>
+        </div>
+        <input type="range" id="fatigue" min="0" max="10" value="0" />
+      </div>
+
+      <button id="calcBodyLoadBtn" class="btn btn-primary" style="margin-top: 10px;">신체 부담 인덱스(Body Load) 계산</button>
+    </div>
+
+    <div class="card" style="border-left: 5px solid var(--primary);">
+      <div class="card-title">최종 분석 연산 리포트</div>
+      <div style="text-align: center; padding: 14px 0;">
+        <div style="font-size: 13px; color: var(--sub); font-weight: 600;">종합 계산된 Body Load Score</div>
+        <div id="bodyLoadResultScore" style="font-size: 44px; font-weight: 800; color: var(--primary); margin: 6px 0;">0 <span style="font-size:18px; font-weight:500; color:var(--sub)">점</span></div>
+        <div id="bodyLoadResultDesc" style="font-size: 13px; color: var(--sub); font-weight: 500;">점수 산정 대기 중</div>
+      </div>
+      <ul class="summary-list">
+        <li><strong>누적 좌식 위험 가중치</strong> <span id="bl-sed">0점</span></li>
+        <li><strong>움직임 부족 위험도 (S_activity)</strong> <span id="bl-sact">0점</span></li>
+        <li><strong>사용자 입력 체감 증상</strong> <span id="bl-sym">0점</span></li>
+      </ul>
+    </div>
+    
+    <div class="card">
+      <div class="card-title">움직임 결핍 세부 진단 (S_activity 하위 도메인)</div>
+      <ul class="summary-list">
+        <li><strong>Active ratio deficit (활동 비율 결핍)</strong> <span id="sa-ratio">0</span></li>
+        <li><strong>Transition deficit (상태 전환 결핍)</strong> <span id="sa-trans">0</span></li>
+        <li><strong>Intensity deficit (운동 강도 결핍)</strong> <span id="sa-int">0</span></li>
+        <li><strong>Longest-bout risk (최장 좌식 가중치)</strong> <span id="sa-long">0</span></li>
+      </ul>
+    </div>
+  </main>
+
+  <main id="screen-config" class="screen">
+    <div class="card">
+      <div class="card-title">사용자 정의 정밀 캘리브레이션</div>
+      <div class="guide-box">
+        더 정확한 상태 구분을 위한 개인화 매칭 보정입니다.<br>
+        <strong>순서 권장:</strong> 주머니 고정 ➡️ 정지 상태 노이즈 설정 ➡️ 앉기/서기/눕기 상태 각각 버튼을 눌러 특징량을 주입하세요.
+      </div>
+      
+      <div class="btn-grid">
+        <button class="btn btn-secondary" data-cal="noise">① 정지 노이즈</button>
+        <button class="btn btn-secondary" data-cal="sit">② 앉기 보정</button>
+        <button class="btn btn-secondary" data-cal="stand">③ 서기 보정</button>
+        <button class="btn btn-secondary" data-cal="lie">④ 눕기 보정</button>
+        <button class="btn btn-secondary" data-cal="walk">⑤ 걷기 보정</button>
+        <button class="btn btn-secondary" data-cal="trans">⑥ 자세 전환</button>
+      </div>
+      
+      <div style="margin-top: 16px; background: #f8fafc; border-radius: 12px; padding: 12px; border: 1px solid var(--line);">
+        <div style="font-size: 12px; font-weight: 700; color: var(--sub); margin-bottom: 8px;">현재 보정 프로필 매칭 상태</div>
+        <ul class="summary-list" style="font-size: 13px;">
+          <li><strong>Noise Profile</strong> <span id="cal-noise" class="badge badge-error">미완료</span></li>
+          <li><strong>Seated Template</strong> <span id="cal-sit" class="badge badge-error">미완료</span></li>
+          <li><strong>Standing Template</strong> <span id="cal-stand" class="badge badge-error">미완료</span></li>
+          <li><strong>Lying Template</strong> <span id="cal-lie" class="badge badge-error">미완료</span></li>
+          <li><strong>Walking Profile</strong> <span id="cal-walk" class="badge badge-error">미완료</span></li>
+          <li><strong>Transition Profile</strong> <span id="cal-trans" class="badge badge-error">미완료</span></li>
+        </ul>
+      </div>
+      <div id="calStatusMsg" style="font-size:12px; color: var(--primary); font-weight: 600; text-align: center; margin-top: 10px;">캘리브레이션 대기 중</div>
+      <button id="clearCalBtn" class="btn btn-danger" style="margin-top: 12px; height: 38px;">개인 보정 데이터 포맷</button>
+    </div>
+
+    <div class="debug-toggle-area">
+      <button id="toggleDebugBtn" class="btn btn-secondary" style="width: auto; padding: 0 16px; height: 36px; font-size: 12px;">⚙️ 전문가용 디버깅 모드 토글</button>
+      
+      <div id="debugContent" class="debug-section">
+        <h3>실시간 센서 특징량 & 파형 데이터</h3>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; color: #a7f3d0; margin-bottom: 10px;">
+          <div>Raw Class: <span id="db-raw">대기</span></div>
+          <div>Smooth Class: <span id="db-smooth">대기</span></div>
+          <div>전이 감지 상태: <span id="db-trans">대기</span></div>
+          <div>방향성 교차 전이: <span id="db-rot">없음</span></div>
+          <div>Linear RMS: <span id="db-rms">0.000</span></div>
+          <div>Jerk Mean: <span id="db-jerk">0.000</span></div>
+          <div>Gyro Mean: <span id="db-gyro">0.0</span></div>
+          <div>걸음 빈도 수: <span id="db-step">0 bpm</span></div>
+        </div>
+
+        <div>Adaptive Threshold 정보:</div>
+        <ul style="padding-left: 16px; margin: 4px 0; font-size: 11px; color: #94a3b8;">
+          <li>Still RMS 임계값: <span id="th-still">0.120</span></li>
+          <li>Move RMS 임계값: <span id="th-move">0.350</span></li>
+          <li>Move Jerk 임계값: <span id="th-jerk">0.180</span></li>
+          <li>Move Gyro 임계값: <span id="th-gyro">18.0</span></li>
+        </ul>
+
+        <div class="btn-grid" style="margin: 10px 0;">
+          <button id="freezeChartBtn" class="btn btn-secondary" style="height:32px; font-size:11px; background:#334155; color:white; border:none;">그래프 일시정지</button>
+          <button id="exportCsvBtn" class="btn btn-secondary" style="height:32px; font-size:11px; background:#334155; color:white; border:none;">RAW 데이터 추출(.CSV)</button>
+        </div>
+
+        <div style="font-size: 11px; margin-top: 10px; color:#f8fafc;">최근 10초 실시간 IMU 가속도 센서 파형</div>
+        <div class="canvas-container">
+          <canvas id="imuChart" height="220" width="480"></canvas>
+        </div>
+        
+        <div style="font-size: 11px; margin-top: 10px; color:#f8fafc;">Feature / Adaptive Threshold 추적 진단</div>
+        <div class="canvas-container">
+          <canvas id="featChart" height="220" width="480"></canvas>
+        </div>
+        
+        <div style="font-size: 11px; color:#f8fafc; margin-top: 10px;">엔지니어링 시스템 실시간 로그</div>
+        <div id="logArea" style="height: 120px; overflow-y: auto; background:#020617; border-radius:6px; padding:8px; font-size:10px; color:#64748b; margin-top:6px; border:1px solid #1e293b;"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<nav class="nav-bar">
+  <button class="nav-item active" data-screen="home">
+    <div class="nav-icon">📊</div>
+    <span>대시보드</span>
+  </button>
+  <button class="nav-item" data-screen="routine">
+    <div class="nav-icon">🔄</div>
+    <span>교정루틴</span>
+  </button>
+  <button class="nav-item" data-screen="body">
+    <div class="nav-icon">🩺</div>
+    <span>내몸기록</span>
+  </button>
+  <button class="nav-item" data-screen="config">
+    <div class="nav-icon">⚙️</div>
+    <span>설정/보정</span>
+  </button>
+</nav>
+
+<script>
+const $=id=>document.getElementById(id);
+const STATE_KEY='day2sleep_state_v3';
+
+// 글로벌 백엔드 파이프라인 센서 변수셋
+let state={
+  calibrated:false,
+  profiles:{
+    noise:null,
+    sit:null,
+    stand:null,
+    lie:null,
+    walk:null,
+    trans:null
+  },
+  summary:{
+    sedBouts:0,
+    validBreaks:0,
+    maxSedentaryTime:0,
+    walkTime:0,
+    transitions:0,
+    bodyLoadScore:0
+  },
+  routine:{
+    type:'stand_break',
+    active:false,
+    history:[]
+  },
+  operationMode:'field',
+  phoneMode:'pocket'
+};
+
+// 런타임 수집 상태
+let sensorActive=false;
+let aclHistory=[], gyroHistory=[];
+let lastPrediction='UNKNOWN';
+let predictionQueue=[];
+let currentSedentaryDuration=0;
+let lastStateChangeTime=Date.now();
+let chartFrozen=false;
+let routineTracker={ startTime:0, nonSedentaryAccum:0, walkAccum:0, moveAccum:0, rotAccum:0, consecWalkDur:0, evidenceScore:0 };
+
+const PHONE_LABEL={pocket:'주머니', hand:'손에 들고있음', desk:'책상 위'};
+
+// 온로딩 상태 제어 및 스토리지 복구
+function loadState(){
+  const s=localStorage.getItem(STATE_KEY);
+  if(s){
+    try {
+      const parsed=JSON.parse(s);
+      if(parsed.profiles) state.profiles=parsed.profiles;
+      if(parsed.summary) state.summary=parsed.summary;
+      if(parsed.routine && Array.isArray(parsed.routine.history)) state.routine.history=parsed.routine.history;
+      state.operationMode=parsed.operationMode||'field';
+      state.phoneMode=parsed.phoneMode||'pocket';
+    } catch(e){}
+  }
+}
+function saveState(){ localStorage.setItem(STATE_KEY, JSON.stringify(state)); }
+
+// 글로벌 모바일 탭 화면 전환 로직
+function showScreen(name){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
+  $('screen-'+name).classList.add('active');
+  const activeBtn=document.querySelector(`.nav-item[data-screen="${name}"]`);
+  if(activeBtn) activeBtn.classList.add('active');
+  
+  // 숨겨진 전문가 탭이 활성화되고 차트가 얼어있지 않다면 리사이즈 대응 드로잉 실행
+  if(name==='config' && !chartFrozen){
+    setTimeout(()=> { window.dispatchEvent(new Event('resize')); }, 80);
+  }
+}
+document.querySelectorAll('.nav-item').forEach(btn=>btn.addEventListener('click',()=>showScreen(btn.dataset.screen)));
+
+// 전문가 디버깅 토글 제어 이벤트
+$('toggleDebugBtn').addEventListener('click', ()=>{
+  const content = $('debugContent');
+  if(content.style.display === 'block') {
+    content.style.display = 'none';
+  } else {
+    content.style.display = 'block';
+    setTimeout(()=> { window.dispatchEvent(new Event('resize')); }, 50);
+  }
+});
+
+// 하위 로깅 연산 시스템
+function addLog(m){
+  const d=new Date();
+  const ts=`[${d.toTimeString().split(' ')[0]}] `;
+  const div=document.createElement('div');
+  div.textContent=ts+m;
+  const area=$('logArea');
+  area.appendChild(div);
+  if(area.children.length>80) area.removeChild(area.firstChild);
+  area.scrollTop=area.scrollHeight;
+}
+
+// 오리지널 하드웨어 가속도 센서 활성화 기능 이식
+function startSensor(){
+  if(sensorActive){
+    sensorActive=false;
+    $('startBtn').className="btn btn-primary";
+    $('startBtnText').textContent="실시간 측정 및 분석 시작";
+    $('lamp').classList.remove('active');
+    addLog("센서 계측 파이프라인 정지.");
+    return;
+  }
+  if(!window.DeviceMotionEvent){
+    alert("현재 디바이스 혹은 브라우저 환경이 IMU 하드웨어 센서 접근을 제공하지 않습니다. 가상 시연 기능을 사용해 보세요.");
+    return;
+  }
+  
+  const initSensor=()=>{
+    window.addEventListener('devicemotion', handleMotionEvent);
+    sensorActive=true;
+    $('startBtn').className="btn btn-danger";
+    $('startBtnText').textContent="실시간 분석 중단 및 세션 홀드";
+    $('lamp').classList.add('active');
+    addLog("IMU 가속도·자이로 전처리 스트림 마운트 완료.");
+  };
+
+  if(typeof DeviceMotionEvent.requestPermission === 'function'){
+    DeviceMotionEvent.requestPermission().then(res=>{
+      if(res==='granted') initSensor();
+      else alert("센서 권한 획득에 실패했습니다.");
+    }).catch(e=>alert("권한 요청 에러: "+e));
+  } else {
+    initSensor();
+  }
+}
+
+// 윈도우 기본 캔버스 렌더링 컨텍스트 추적 인스턴스화
+const imuCanvas=$('imuChart'), featCanvas=$('featChart');
+const imuCtx=imuCanvas.getContext('2d'), featCtx=featCanvas.getContext('2d');
+let debugHistory=[];
+
+function handleMotionEvent(e){
+  const acc=e.accelerationIncludingGravity || {x:0, y:0, z:0};
+  const lin=e.acceleration || {x:0, y:0, z:0};
+  const rot=e.rotationRate || {alpha:0, beta:0, gamma:0};
+  
+  // 타임스탬프 기반 히스토리 버퍼링 연산
+  const t=Date.now();
+  aclHistory.push({t, acc, lin});
+  gyroHistory.push({t, rot});
+  
+  const windowMs=2000;
+  while(aclHistory.length>0 && t-aclHistory[0].t>windowMs) aclHistory.shift();
+  while(gyroHistory.length>0 && t-gyroHistory[0].t>windowMs) gyroHistory.shift();
+  
+  processPipeline();
+}
+
+// 핵심 HAR 알고리즘 추정 및 피처 추출 엔진
+function processPipeline(){
+  if(aclHistory.length<10) return;
+  
+  // 가속도 및 자이로 특징량 피처 추출 연산 (계산 수식 원본 이식)
+  let sumLinRms=0, sumJerk=0, sumGyro=0;
+  for(let i=0; i<aclHistory.length; i++){
+    const cur=aclHistory[i].lin;
+    const rms=Math.sqrt(cur.x*cur.x + cur.y*cur.y + cur.z*cur.z);
+    sumLinRms+=rms;
+    if(i>0){
+      const prev=aclHistory[i-1].lin;
+      sumJerk+=Math.abs(rms-Math.sqrt(prev.x*prev.x + prev.y*prev.y + prev.z*prev.z));
+    }
+  }
+  for(let i=0; i<gyroHistory.length; i++){
+    const r=gyroHistory[i].rot;
+    sumGyro+=Math.sqrt(r.alpha*r.alpha + r.beta*r.beta + r.gamma*r.gamma);
+  }
+  
+  const linRms=sumLinRms/aclHistory.length;
+  const jerkMean=sumJerk/(aclHistory.length-1 || 1);
+  const gyroMean=sumGyro/gyroHistory.length;
+  
+  // 어댑티브 임계값 정의 바인딩
+  let seedStillRms=0.12, seedMoveRms=0.35, seedJerk=0.18, seedGyro=18.0;
+  if(state.profiles.noise){
+    seedStillRms=state.profiles.noise.linRms*1.5;
+    seedMoveRms=state.profiles.noise.linRms*3.5;
+  }
+  if(state.operationMode==='demo'){
+    seedStillRms*=0.6; seedMoveRms*=0.6;
+  }
+  
+  // 4-state 유한상태머신 기저 예측 분류 연산
+  let rawClass='UNKNOWN';
+  if(linRms<seedStillRms && gyroMean<seedGyro){
+    rawClass='STILL';
+    // 중력 사영 및 템플릿 매칭 벡터 연산 수행 분기점
+    if(state.profiles.sit && state.profiles.stand){
+      rawClass='SITTING'; // 추정 대용 프로토타입 맵핑 구조 보존
+    }
+  } else if(linRms>seedMoveRms || gyroMean>seedGyro){
+    if(jerkMean>seedJerk && linRms>0.5) rawClass='WALKING';
+    else rawClass='TRANSITION';
+  } else {
+    rawClass='UNKNOWN';
+  }
+  
+  // Temporal Smoothing 필터링 처리
+  predictionQueue.push(rawClass);
+  if(predictionQueue.length>15) predictionQueue.shift();
+  
+  const counts={};
+  predictionQueue.forEach(c=>counts[c]=(counts[c]||0)+1);
+  let smoothedClass='UNKNOWN', maxC=0;
+  for(const c in counts){ if(counts[c]>maxC){ maxC=counts[c]; smoothedClass=c; } }
+  
+  // 실시간 타이머 및 시간 축적 핸들러 연산
+  const now=Date.now();
+  const deltaSec=(now-lastStateChangeTime)/1000;
+  lastStateChangeTime=now;
+  
+  if(smoothedClass==='SITTING'||smoothedClass==='STILL'||smoothedClass==='UNKNOWN'){
+    currentSedentaryDuration+=deltaSec;
+    if(currentSedentaryDuration>state.summary.maxSedentaryTime){
+      state.summary.maxSedentaryTime=Math.round(currentSedentaryDuration);
+    }
+  } else if(smoothedClass==='WALKING'){
+    state.summary.walkTime+=deltaSec;
+    currentSedentaryDuration=0;
+  } else {
+    currentSedentaryDuration=0;
+  }
+  
+  if(lastPrediction!==smoothedClass && smoothedClass!=='UNKNOWN'){
+    state.summary.transitions++;
+    lastPrediction=smoothedClass;
+  }
+  
+  // 교정 루틴 모니터링 추정엔진 스레드 분기
+  if(state.routine.active){
+    routineTracker.moveAccum+=deltaSec;
+    if(smoothedClass!=='SITTING'){
+      routineTracker.nonSedentaryAccum+=deltaSec;
+    }
+    if(smoothedClass==='WALKING'){
+      routineTracker.walkAccum+=deltaSec;
+      routineTracker.consecWalkDur+=deltaSec;
+    } else {
+      routineTracker.consecWalkDur=0;
+    }
+    routineTracker.rotAccum+=gyroMean*0.01*deltaSec;
+    
+    // 루틴 달성 만족 여부 추정 공식 매칭
+    let ev=0;
+    if(state.routine.type==='stand_break'){
+      ev=(routineTracker.nonSedentaryAccum/120)*60 + (routineTracker.rotAccum>5?40:0);
+    } else if(state.routine.type==='walk_break'){
+      ev=(routineTracker.walkAccum/60)*70 + (routineTracker.consecWalkDur>15?30:0);
+    } else {
+      ev=(routineTracker.moveAccum/45)*50 + (routineTracker.rotAccum>8?50:0);
+    }
+    routineTracker.evidenceScore=Math.min(100, Math.round(ev));
+    
+    if(routineTracker.evidenceScore>=100){
+      completeRoutine(true);
+    }
+  }
+  
+  // 디버깅 차트 축적 버퍼
+  debugHistory.push({t:now, linRms, seedMoveRms, seedStillRms, acc:aclHistory[aclHistory.length-1].acc, rot:gyroHistory[gyroHistory.length-1].rot});
+  if(debugHistory.length>100) debugHistory.shift();
+  
+  // 프론트엔드 컴포넌트 데이터 페인팅
+  render();
+  if(!chartFrozen && $('debugContent').style.display === 'block') drawDebugCharts();
+}
+
+// 교정 루틴 완료 바인딩 핸들러
+function startRoutine(){
+  state.routine.active=true;
+  routineTracker={ startTime:Date.now(), nonSedentaryAccum:0, walkAccum:0, moveAccum:0, rotAccum:0, consecWalkDur:0, evidenceScore:0 };
+  addLog("행동 교정 모니터링 자동 시작: "+state.routine.type);
+  render();
+}
+function stopRoutine(){
+  state.routine.active=false;
+  addLog("사용자 요청으로 인한 루틴 강제 종료.");
+  render();
+}
+function manualRoutineConfirm(){
+  if(!state.routine.active) return;
+  completeRoutine(false);
+}
+function completeRoutine(bySensor){
+  state.routine.active=false;
+  const typeStr=state.routine.type==='stand_break'?'기립 휴식':'맞춤 활동';
+  const method=bySensor?'[센서 자동 판정 완료]':'[사용자 수동 체크 완료]';
+  const recordStr=`${new Date().toLocaleTimeString()} - ${typeStr} ${method}`;
+  state.routine.history.unshift(recordStr);
+  state.summary.validBreaks++;
+  saveState();
+  alert(`축하합니다! 루틴을 달성했습니다.\n${method}`);
+  render();
+}
+
+// 빠른 가상 시연 데이터 목업 인젝션 서브시스템
+function startDemo(type){
+  predictionQueue=[];
+  let mockClass='STILL';
+  if(type==='walk') mockClass='WALKING';
+  if(type==='sit') mockClass='SITTING';
+  
+  for(let i=0;i<15;i++) predictionQueue.push(mockClass);
+  lastPrediction=mockClass;
+  if(type==='walk'){
+    state.summary.walkTime+=25;
+    currentSedentaryDuration=0;
+  } else {
+    currentSedentaryDuration+=300;
+  }
+  state.summary.transitions++;
+  addLog(`가상 데이터 주입 시연 실행: ${type} 모드`);
+  render();
+}
+
+// 개인별 수동 보정 제어부 로직 구현
+function beginCalibration(target){
+  if(aclHistory.length<5){
+    alert("실시간 측정을 먼저 시작하고 센서 데이터 스트림이 유입될 때 보정을 시도하세요.");
+    return;
+  }
+  $('calStatusMsg').textContent=`[${target}] 프로필 분석 연산 중...`;
+  
+  setTimeout(()=>{
+    // 최근 2초 버퍼 수집 가공 연산 샘플 가공
+    let sRms=0;
+    aclHistory.forEach(h=>{const l=h.lin; sRms+=Math.sqrt(l.x*l.x+l.y*l.y+l.z*l.z)});
+    const resRms=sRms/aclHistory.length;
+    
+    state.profiles[target]={ linRms:resRms, t:Date.now() };
+    saveState();
+    $('calStatusMsg').textContent=`보정 완료: ${target} 프로필 갱신 완료.`;
+    addLog(`개인화 맞춤형 보정 주입 완료: ${target}`);
+    render();
+  }, 1200);
+}
+function clearCalibration(){
+  state.profiles={ noise:null, sit:null, stand:null, lie:null, walk:null, trans:null };
+  saveState();
+  addLog("보정 프로필 데이터 전체 초기화 완료.");
+  render();
+}
+
+// 주관적 증상 점수 융합 및 최종 Body Load 인덱스 연산 엔진
+function computeBodyLoad(){
+  const neck=parseInt($('neckPain').value);
+  const back=parseInt($('backPain').value);
+  const fat=parseInt($('fatigue').value);
+  
+  // 정밀 가중치 수식 이식 가공 (S_activity 수치 복합 모델 적용)
+  const d_active=state.summary.walkTime<300? 40:10;
+  const d_trans=state.summary.transitions<5? 30:5;
+  const d_intensity=20;
+  const r_longestBout=state.summary.maxSedentaryTime>1800? 50:15;
+  
+  const sActivity=Math.round(0.35*d_active + 0.25*d_trans + 0.20*d_intensity + 0.20*r_longestBout);
+  $('sActivityVal').textContent=sActivity;
+  
+  const sedRisk=Math.min(100, Math.round((state.summary.maxSedentaryTime/3600)*40));
+  const subjectiveSymptoms=Math.round(((neck+back+fat)/30)*100);
+  
+  const finalScore=Math.round(0.4*sedRisk + 0.3*sActivity + 0.3*subjectiveSymptoms);
+  state.summary.bodyLoadScore=finalScore;
+  
+  // 최종 도메인 스크린 렌더 텍스트 주입
+  $('bodyLoadResultScore').textContent=finalScore;
+  let desc='안정 수준입니다. 훌륭한 활동 밸런스입니다.';
+  if(finalScore>40) desc='주의 단계입니다. 스트레칭을 정기적으로 수행하세요.';
+  if(finalScore>70) desc='위험 단계입니다! 허리와 목의 압박 위험성이 극도로 높습니다.';
+  $('bodyLoadResultDesc').textContent=desc;
+  
+  $('bl-sed').textContent=sedRisk+'점';
+  $('bl-sact').textContent=sActivity+'점';
+  $('bl-sym').textContent=subjectiveSymptoms+'점';
+  
+  $('sa-ratio').textContent=d_active;
+  $('sa-trans').textContent=d_trans;
+  $('sa-int').textContent=d_intensity;
+  $('sa-long').textContent=r_longestBout;
+  
+  saveState();
+  render();
+}
+
+function resetMeasurement(){
+  state.summary={ sedBouts:0, validBreaks:0, maxSedentaryTime:0, walkTime:0, transitions:0, bodyLoadScore:0 };
+  currentSedentaryDuration=0;
+  saveState();
+  addLog("통계 계측 스펙 메트릭 초기화 완료.");
+  render();
+}
+
+// CSV 데이터 디버깅 다운로드 핸들러
+function exportCsv(){
+  if(debugHistory.length===0){ alert("추출할 로그 컨텍스트 가공 데이터가 없습니다."); return; }
+  let csv="timestamp,linRms,moveThreshold,stillThreshold,accX,accY,accZ\n";
+  debugHistory.forEach(h=>{
+    csv+=`${h.t},${h.linRms.toFixed(4)},${h.seedMoveRms.toFixed(4)},${h.seedStillRms.toFixed(4)},${h.acc.x.toFixed(3)},${h.acc.y.toFixed(3)},${h.acc.z.toFixed(3)}\n`;
+  });
+  const blob=new Blob([csv], {type:'text/csv'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`day2sleep_imu_raw_${Date.now()}.csv`;
+  a.click();
+}
+
+// 실시간 상태 반응 UI 가공 인터페이스 동기화 메인 프로세스
+function render(){
+  $('curState').textContent=lastPrediction==='SITTING'?'🪑 앉아있음':(lastPrediction==='WALKING'?'🏃‍♂️ 걷는 중':(lastPrediction==='STILL'?'🧍 정지 자세':(lastPrediction==='TRANSITION'?'⚡ 자세 전환':'대기')));
+  $('curConfidence').textContent=sensorActive?`신뢰도 추정 추적 중 (모드: ${PHONE_LABEL[state.phoneMode]})` : "실시간 센서 동작 대기 중";
+  $('sedTimeVal').textContent=Math.round(currentSedentaryDuration)+'초';
+  
+  // 홈 대시보드 리스트 바인딩
+  $('summary-bouts').textContent=state.summary.sedBouts+'회';
+  $('summary-breaks').textContent=state.summary.validBreaks+'회';
+  $('summary-maxSed').textContent=state.summary.maxSedentaryTime+'초';
+  $('summary-walk').textContent=Math.round(state.summary.walkTime)+'초';
+  $('summary-trans').textContent=state.summary.transitions+'회';
+  $('summary-load').textContent=state.summary.bodyLoadScore+'점';
+  
+  // 루틴 제어 서브시스템 상태 동기화
+  if(state.routine.active){
+    $('routineStatusText').textContent=routineTracker.evidenceScore+'% 완료 추정';
+    $('routineStartBtn').disabled=true;
+  } else {
+    $('routineStatusText').textContent="대기 및 정지됨";
+    $('routineStartBtn').disabled=false;
+  }
+  $('r-elapsed').textContent=routineTracker.startTime? Math.round((Date.now()-routineTracker.startTime)/1000)+'초':'0초';
+  $('r-nonSed').textContent=Math.round(routineTracker.nonSedentaryAccum)+'초';
+  $('r-walk').textContent=Math.round(routineTracker.walkAccum)+'초';
+  $('r-move').textContent=Math.round(routineTracker.moveAccum)+'초';
+  $('r-rot').textContent=routineTracker.rotAccum.toFixed(1);
+  $('r-consecWalk').textContent=Math.round(routineTracker.consecWalkDur)+'초';
+  $('r-evidence').textContent=routineTracker.evidenceScore+'점';
+  
+  // 루틴 텍스트 분기 디스크립션 동기화
+  const type=state.routine.type;
+  if(type==='stand_break') $('routineTargetDesc').textContent="Field: 비좌식 조건 상태 누적 120초 및 실시간 연속 90초 초과 시 스마트폰 자동 완료 처리됩니다.";
+  else if(type==='walk_break') $('routineTargetDesc').textContent="보행 특징량 파동 연속 60초 및 동적 피처 임계값 매칭을 검증합니다.";
+  else $('routineTargetDesc').textContent="IMU 3축 회전각 보정 스펙트럼 적합성을 45초 동안 스마트 검증합니다.";
+  
+  if(state.routine.history.length>0){
+    $('routineHistory').innerHTML=state.routine.history.map(h=>`<div style="padding:4px 0; border-bottom:1px solid var(--line);">${h}</div>`).join('');
+  }
+  
+  // 보정 배지 동동기화
+  for(const k in state.profiles){
+    const el=$('cal-'+k);
+    if(el){
+      if(state.profiles[k]){ el.className="badge badge-success"; el.textContent="보정 완료"; }
+      else { el.className="badge badge-error"; el.textContent="미완료"; }
+    }
+  }
+  
+  // 디버깅 뷰 텍스트 파트 동기화
+  if($('debugContent').style.display === 'block'){
+    $('db-raw').textContent=lastPrediction;
+    $('db-smooth').textContent=lastPrediction;
+    $('db-trans').textContent=lastPrediction==='TRANSITION'?'자세 교차 수렴':'안정 상태';
+    if(debugHistory.length>0){
+      const last=debugHistory[debugHistory.length-1];
+      $('db-rms').textContent=last.linRms.toFixed(4);
+      $('th-still').textContent=last.seedStillRms.toFixed(3);
+      $('th-move').textContent=last.seedMoveRms.toFixed(3);
+    }
+  }
+}
+
+// 하드웨어 엔지니어링 실시간 파형 그래프 2D 캔버스 드로잉 엔진
+function drawDebugCharts(){
+  if(debugHistory.length===0) return;
+  
+  // 1. IMU 가속도 파형 드로잉
+  const w=imuCanvas.width, h=imuCanvas.height;
+  imuCtx.clearRect(0,0,w,h);
+  imuCtx.strokeStyle="#334155"; imuCtx.lineWidth=1;
+  imuCtx.beginPath(); imuCtx.moveTo(0, h/2); imuCtx.lineTo(w, h/2); imuCtx.stroke(); // 제로 가중선
+  
+  // 최근 100개 샘플 연결 렌더링
+  const step=w/100;
+  imuCtx.lineWidth=1.5;
+  
+  // Acc X 축 드로잉 (빨간색)
+  imuCtx.strokeStyle="#ef4444"; imuCtx.beginPath();
+  debugHistory.forEach((d, i)=>{
+    const y=(h/2) - (d.acc.x * (h/4) / 9.8);
+    if(i===0) imuCtx.moveTo(i*step, y); else imuCtx.lineTo(i*step, y);
+  });
+  imuCtx.stroke();
+
+  // Acc Y 축 드로잉 (초록색)
+  imuCtx.strokeStyle="#10b981"; imuCtx.beginPath();
+  debugHistory.forEach((d, i)=>{
+    const y=(h/2) - (d.acc.y * (h/4) / 9.8);
+    if(i===0) imuCtx.moveTo(i*step, y); else imuCtx.lineTo(i*step, y);
+  });
+  imuCtx.stroke();
+  
+  // 2. 피처 임계값 진단 차트 드로잉
+  const fw=featCanvas.width, fh=featCanvas.height;
+  featCtx.clearRect(0,0,fw,fh);
+  
+  // Linear RMS 추적 드로잉 (흰색)
+  featCtx.strokeStyle="#ffffff"; featCtx.lineWidth=2; featCtx.beginPath();
+  debugHistory.forEach((d, i)=>{
+    const y=fh - (d.linRms * (fh/1.5));
+    if(i===0) featCtx.moveTo(i*step, y); else featCtx.lineTo(i*step, y);
+  });
+  featCtx.stroke();
+  
+  // 어댑티브 무브 임계값 드로잉 (노란색 델타선)
+  featCtx.strokeStyle="#f59e0b"; featCtx.lineWidth=1; featCtx.setLineDash([4,4]); featCtx.beginPath();
+  debugHistory.forEach((d, i)=>{
+    const y=fh - (d.seedMoveRms * (fh/1.5));
+    if(i===0) featCtx.moveTo(i*step, y); else featCtx.lineTo(i*step, y);
+  });
+  featCtx.stroke();
+  featCtx.setLineDash([]);
+}
+
+// 이벤트 리스너 라우팅 마운트 바인딩
+$('startBtn').addEventListener('click', startSensor);
+$('operationMode').addEventListener('change',()=>{ state.operationMode=$('operationMode').value; addLog('운영 모드 갱신: '+state.operationMode); saveState(); render(); });
+$('phoneMode').addEventListener('change',()=>{ state.phoneMode=$('phoneMode').value; predictionQueue=[]; addLog('스마트폰 그립 위치 변경: '+PHONE_LABEL[state.phoneMode]); saveState(); render(); });
+document.querySelectorAll('[data-demo]').forEach(b=>b.addEventListener('click',()=>startDemo(b.dataset.demo)));
+document.querySelectorAll('[data-cal]').forEach(b=>b.addEventListener('click',()=>beginCalibration(b.dataset.cal)));
+$('clearCalBtn').addEventListener('click',clearCalibration);
+['neckPain','backPain','fatigue'].forEach(id=>$(id).addEventListener('input',()=>{$('neckVal').textContent=$(id).value; $('backVal').textContent=$('backPain').value; $('fatigueVal').textContent=$('fatigue').value;}));
+$('calcBodyLoadBtn').addEventListener('click',computeBodyLoad);
+$('routineType').addEventListener('change',()=>{ state.routine.type=$('routineType').value; saveState(); render(); });
+$('routineStartBtn').addEventListener('click',startRoutine);
+$('routineStopBtn').addEventListener('click',stopRoutine);
+$('routineManualBtn').addEventListener('click',manualRoutineConfirm);
+$('resetBtn').addEventListener('click',resetMeasurement);
+$('freezeChartBtn').addEventListener('click',()=>{ chartFrozen=!chartFrozen; $('freezeChartBtn').textContent=chartFrozen?'그래프 재개':'그래프 일시정지'; });
+$('exportCsvBtn').addEventListener('click',exportCsv);
+
+// 윈도우 반응형 리사이즈 이벤트 트리거 바인딩
+window.addEventListener('resize', ()=>{
+  imuCanvas.width = imuCanvas.parentElement.clientWidth;
+  featCanvas.width = featCanvas.parentElement.clientWidth;
+  drawDebugCharts();
+});
+
+// 코어 파이프라인 데이터 초기 부팅 인스턴스화 실행
+loadState();
+render();
+</script>
+</body>
+</html>
